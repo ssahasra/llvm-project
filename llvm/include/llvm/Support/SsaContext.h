@@ -87,6 +87,7 @@ class ISsaContext {
   virtual void anchor();
 
 public:
+  virtual ~ISsaContext() = default;
   virtual BlockHandle getDefBlock(SsaValueHandle value) const = 0;
 
   virtual Printable printableName(BlockHandle ref) const = 0;
