@@ -511,7 +511,7 @@ class NewGVN {
   unsigned int NumFuncArgs = 0;
 
   // RPOOrdering of basic blocks
-  DenseMap<const DomTreeNode *, unsigned> RPOOrdering;
+  DenseMap<const GenericDomTreeNodeBase *, unsigned> RPOOrdering;
 
   // Congruence class info.
 
