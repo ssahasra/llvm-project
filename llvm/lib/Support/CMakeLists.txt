@@ -168,6 +168,7 @@ add_llvm_component_library(LLVMSupport
   SmallVector.cpp
   SourceMgr.cpp
   SpecialCaseList.cpp
+  SsaContext.cpp
   Statistic.cpp
   StringExtras.cpp
   StringMap.cpp
