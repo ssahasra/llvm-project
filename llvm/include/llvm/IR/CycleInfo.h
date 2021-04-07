@@ -15,6 +15,7 @@
 #define LLVM_IR_CYCLEINFO_H
 
 #include "llvm/IR/PassManager.h"
+#include "llvm/ADT/DenseMapInfo.h"
 #include "llvm/Support/Printable.h"
 
 namespace llvm {
@@ -29,6 +30,7 @@ class CycleInfo;
 class Cycle {
   GenericCycle<BasicBlock> *m_cycle;
   friend class CycleInfo;
+  friend struct DenseMapInfo<Cycle>;
 
 public:
   Cycle(GenericCycle<BasicBlock> *C) : m_cycle(C) {}
@@ -85,18 +87,30 @@ public:
   iterator_range<const_entry_iterator> entries() const;
   //@}
 
+  friend bool operator==(const Cycle &L, const Cycle &R) {
+    return L.m_cycle == R.m_cycle;
+  }
+
+  friend bool operator!=(const Cycle &L, const Cycle &R) {
+    return L.m_cycle != R.m_cycle;
+  }
+
   Printable printEntries() const;
   Printable print() const;
   void dump() const;
 };
 
+  template<>
+  struct DenseMapInfo<Cycle> {
+    using Base = DenseMapInfo<GenericCycle<BasicBlock>*>;
+    static inline Cycle getEmptyKey() { return Cycle(Base::getEmptyKey()); }
+    static inline Cycle getTombstoneKey() { return Cycle(Base::getTombstoneKey()); }
+    static unsigned getHashValue(const Cycle &Val) { return Base::getHashValue(Val.m_cycle); }
+    static bool isEqual(const Cycle &LHS, const Cycle &RHS) { return LHS == RHS; }
+  };
+
 template <typename BlockType> class GenericCycleInfo;
 class CycleInfo {
-  struct Deleter {
-    void operator()(GenericCycleInfo<BasicBlock> *ptr);
-  };
-  std::unique_ptr<GenericCycleInfo<BasicBlock>, Deleter> m_cycleinfo;
-
 public:
   CycleInfo();
   void reset();
@@ -133,52 +147,11 @@ public:
   void print(raw_ostream &out) const;
   void dump() const { print(dbgs()); }
   //@}
-};
 
-/// Analysis pass which computes a \ref CycleInfo.
-class CycleInfoAnalysis : public AnalysisInfoMixin<CycleInfoAnalysis> {
-  friend AnalysisInfoMixin<CycleInfoAnalysis>;
-  static AnalysisKey Key;
+  static void deleter(GenericCycleInfo<BasicBlock> *ptr);
 
-public:
-  /// Provide the result typedef for this analysis pass.
-  using Result = CycleInfo;
-
-  /// Run the analysis pass over a function and produce a dominator tree.
-  CycleInfo run(Function &F, FunctionAnalysisManager &);
-
-  // TODO: verify analysis?
-};
-
-/// Printer pass for the \c DominatorTree.
-class CycleInfoPrinterPass : public PassInfoMixin<CycleInfoPrinterPass> {
-  raw_ostream &OS;
-
-public:
-  explicit CycleInfoPrinterPass(raw_ostream &OS);
-
-  PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);
-};
-
-/// Legacy analysis pass which computes a \ref CycleInfo.
-class CycleInfoWrapperPass : public FunctionPass {
-  Function *m_function = nullptr;
-  CycleInfo m_cycleInfo;
-
-public:
-  static char ID;
-
-  CycleInfoWrapperPass();
-
-  CycleInfo &getCycleInfo() { return m_cycleInfo; }
-  const CycleInfo &getCycleInfo() const { return m_cycleInfo; }
-
-  bool runOnFunction(Function &F) override;
-  void getAnalysisUsage(AnalysisUsage &AU) const override;
-  void releaseMemory() override;
-  void print(raw_ostream &OS, const Module *M = nullptr) const override;
-
-  // TODO: verify analysis?
+private:
+  std::unique_ptr<GenericCycleInfo<BasicBlock>, decltype(&deleter)> m_cycleinfo;
 };
 
 } // end namespace llvm
