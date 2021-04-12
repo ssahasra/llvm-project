@@ -30,7 +30,7 @@ CycleInfoPrinterPass::CycleInfoPrinterPass(raw_ostream &OS) : OS(OS) {}
 PreservedAnalyses CycleInfoPrinterPass::run(Function &F,
                                             FunctionAnalysisManager &AM) {
   OS << "CycleInfo for function: " << F.getName() << "\n";
-  AM.getResult<CycleInfoAnalysis>(F).print(OS);
+  (void)AM.getResult<CycleInfoAnalysis>(F);
 
   return PreservedAnalyses::all();
 }
