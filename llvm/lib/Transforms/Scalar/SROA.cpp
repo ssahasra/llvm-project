@@ -131,8 +131,7 @@ public:
 
   void InsertHelper(Instruction *I, const Twine &Name, BasicBlock *BB,
                     BasicBlock::iterator InsertPt) const override {
-    IRBuilderDefaultInserter::InsertHelper(I, getNameWithPrefix(Name), BB,
-                                           InsertPt);
+    I->setName(getNameWithPrefix(Name));
   }
 };
 

@@ -65,10 +65,8 @@ public:
   virtual ~IRBuilderDefaultInserter();
 
   virtual void InsertHelper(Instruction *I, const Twine &Name,
-                            BasicBlock *BB,
-                            BasicBlock::iterator InsertPt) const {
-    if (BB) BB->getInstList().insert(InsertPt, I);
-    I->setName(Name);
+                          BasicBlock *BB,
+                          BasicBlock::iterator InsertPt) const {
   }
 };
 
@@ -86,7 +84,6 @@ public:
   void InsertHelper(Instruction *I, const Twine &Name,
                     BasicBlock *BB,
                     BasicBlock::iterator InsertPt) const override {
-    IRBuilderDefaultInserter::InsertHelper(I, Name, BB, InsertPt);
     Callback(I);
   }
 };
@@ -144,12 +141,19 @@ public:
     ClearInsertionPoint();
   }
 
-  /// Insert and return the specified instruction.
   template<typename InstTy>
-  InstTy *Insert(InstTy *I, const Twine &Name = "") const {
+  InstTy *InsertHelper(InstTy *I, const Twine &Name = "") const {
+    I->setName(Name);
     Inserter.InsertHelper(I, Name, BB, InsertPt);
     AddMetadataToInst(I);
     return I;
+  }
+
+  /// Insert and return the specified instruction.
+  template<typename InstTy>
+  InstTy *Insert(InstTy *I, const Twine &Name = "") const {
+    if (BB) BB->getInstList().insert(InsertPt, I);
+    return InsertHelper(I, Name);
   }
 
   /// No-op overload to handle constants.
@@ -973,7 +977,9 @@ public:
 
   /// Create an unconditional 'br label X' instruction.
   BranchInst *CreateBr(BasicBlock *Dest) {
-    return Insert(BranchInst::Create(Dest));
+    assert(BB);
+    assert(InsertPt == BB->end());
+    return InsertHelper(BranchInst::Create(Dest, BB));
   }
 
   /// Create a conditional 'br Cond, TrueDest, FalseDest'

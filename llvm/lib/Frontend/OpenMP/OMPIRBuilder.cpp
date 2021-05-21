@@ -1156,9 +1156,11 @@ OpenMPIRBuilder::createCanonicalLoop(const LocationDescription &Loc,
     // Split the loop at the insertion point: Branch to the preheader and move
     // every following instruction to after the loop (the After BB). Also, the
     // new successor is the loop's after block.
-    Builder.CreateBr(CL->Preheader);
     After->getInstList().splice(After->begin(), BB->getInstList(),
                                 Builder.GetInsertPoint(), BB->end());
+    Builder.SetInsertPoint(BB);
+    Builder.CreateBr(CL->Preheader);
+    Builder.SetInsertPoint(After, After->begin());
     After->replaceSuccessorsPhiUsesWith(BB, After);
   }
 

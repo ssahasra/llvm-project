@@ -353,8 +353,10 @@ CloneLoopBlocks(Loop *L, Value *NewIter, const bool CreateRemainderLoop,
       // jump to InsertBot. If not, create a loop back to cloned head.
       VMap.erase((*BB)->getTerminator());
       BasicBlock *FirstLoopBB = cast<BasicBlock>(VMap[Header]);
-      BranchInst *LatchBR = cast<BranchInst>(NewBB->getTerminator());
-      IRBuilder<> Builder(LatchBR);
+      auto DebugLoc = NewBB->getTerminator()->getDebugLoc();
+      NewBB->getTerminator()->eraseFromParent();
+      IRBuilder<> Builder(NewBB);
+      Builder.SetCurrentDebugLocation(DebugLoc);
       if (!CreateRemainderLoop) {
         Builder.CreateBr(InsertBot);
       } else {
@@ -370,7 +372,6 @@ CloneLoopBlocks(Loop *L, Value *NewIter, const bool CreateRemainderLoop,
         NewIdx->addIncoming(NewIter, InsertTop);
         NewIdx->addIncoming(IdxSub, NewBB);
       }
-      LatchBR->eraseFromParent();
     }
   }
 

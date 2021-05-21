@@ -709,18 +709,22 @@ private:
 
 } // end anonymous namespace
 
+static Instruction *GetTerminatorCondition(Instruction *TI) {
+  if (SwitchInst *SI = dyn_cast<SwitchInst>(TI)) {
+    return dyn_cast<Instruction>(SI->getCondition());
+  }
+  if (BranchInst *BI = dyn_cast<BranchInst>(TI)) {
+    if (BI->isConditional())
+      return dyn_cast<Instruction>(BI->getCondition());
+  } else if (IndirectBrInst *IBI = dyn_cast<IndirectBrInst>(TI)) {
+    return dyn_cast<Instruction>(IBI->getAddress());
+  }
+  return nullptr;
+}
+
 static void EraseTerminatorAndDCECond(Instruction *TI,
                                       MemorySSAUpdater *MSSAU = nullptr) {
-  Instruction *Cond = nullptr;
-  if (SwitchInst *SI = dyn_cast<SwitchInst>(TI)) {
-    Cond = dyn_cast<Instruction>(SI->getCondition());
-  } else if (BranchInst *BI = dyn_cast<BranchInst>(TI)) {
-    if (BI->isConditional())
-      Cond = dyn_cast<Instruction>(BI->getCondition());
-  } else if (IndirectBrInst *IBI = dyn_cast<IndirectBrInst>(TI)) {
-    Cond = dyn_cast<Instruction>(IBI->getAddress());
-  }
-
+  Instruction *Cond = GetTerminatorCondition(TI);
   TI->eraseFromParent();
   if (Cond)
     RecursivelyDeleteTriviallyDeadInstructions(Cond, nullptr, MSSAU);
@@ -883,18 +887,19 @@ bool SimplifyCFGOpt::SimplifyEqualityComparisonWithOnlyPredecessor(
       // Okay, one of the successors of this condbr is dead.  Convert it to a
       // uncond br.
       assert(ThisCases.size() == 1 && "Branch can only have one case!");
-      // Insert the new branch.
-      Instruction *NI = Builder.CreateBr(ThisDef);
-      (void)NI;
+
+      LLVM_DEBUG(dbgs() << "Threading pred instr: " << *Pred->getTerminator()
+                 << "Through successor TI: " << *TI);
 
       // Remove PHI node entries for the dead edge.
       ThisCases[0].Dest->removePredecessor(PredDef);
-
-      LLVM_DEBUG(dbgs() << "Threading pred instr: " << *Pred->getTerminator()
-                        << "Through successor TI: " << *TI << "Leaving: " << *NI
-                        << "\n");
-
       EraseTerminatorAndDCECond(TI);
+
+      Builder.SetInsertPoint(PredDef);
+      Instruction *NI = Builder.CreateBr(ThisDef);
+      (void)NI;
+      LLVM_DEBUG(dbgs() << "Leaving: " << *NI
+                 << "\n");
 
       if (DTU)
         DTU->applyUpdates(
@@ -975,15 +980,15 @@ bool SimplifyCFGOpt::SimplifyEqualityComparisonWithOnlyPredecessor(
     } else
       CheckEdge = nullptr;
 
-  // Insert the new branch.
+  LLVM_DEBUG(dbgs() << "Threading pred instr: " << *Pred->getTerminator()
+             << "Through successor TI: " << *TI);
+  EraseTerminatorAndDCECond(TI);
+  Builder.SetInsertPoint(TIBB);
   Instruction *NI = Builder.CreateBr(TheRealDest);
   (void)NI;
-
-  LLVM_DEBUG(dbgs() << "Threading pred instr: " << *Pred->getTerminator()
-                    << "Through successor TI: " << *TI << "Leaving: " << *NI
+  LLVM_DEBUG(dbgs() << "Leaving: " << *NI
                     << "\n");
 
-  EraseTerminatorAndDCECond(TI);
   if (DTU) {
     SmallVector<DominatorTree::UpdateType, 2> Updates;
     Updates.reserve(RemovedSuccs.size());
@@ -2849,8 +2854,8 @@ static bool FoldTwoEntryPHINode(PHINode *PN, const TargetTransformInfo &TTI,
   // At this point, IfBlock1 and IfBlock2 are both empty, so our if statement
   // has been flattened.  Change DomBlock to jump directly to our new block to
   // avoid other simplifycfg's kicking in on the diamond.
-  Instruction *OldTI = DomBlock->getTerminator();
-  Builder.SetInsertPoint(OldTI);
+  DomBlock->getTerminator()->eraseFromParent();
+  Builder.SetInsertPoint(DomBlock);
   Builder.CreateBr(BB);
 
   SmallVector<DominatorTree::UpdateType, 3> Updates;
@@ -2860,7 +2865,6 @@ static bool FoldTwoEntryPHINode(PHINode *PN, const TargetTransformInfo &TTI,
       Updates.push_back({DominatorTree::Delete, DomBlock, Successor});
   }
 
-  OldTI->eraseFromParent();
   if (DTU)
     DTU->applyUpdates(Updates);
 
@@ -3942,16 +3946,17 @@ bool SimplifyCFGOpt::SimplifyTerminatorOnSelect(Instruction *OldTerm,
     else if (Succ == KeepEdge2)
       KeepEdge2 = nullptr;
     else {
-      Succ->removePredecessor(BB,
-                              /*KeepOneInputPHIs=*/true);
+      Succ->removePredecessor(BB, /*KeepOneInputPHIs=*/true);
 
       if (Succ != TrueBB && Succ != FalseBB)
         RemovedSuccessors.insert(Succ);
     }
   }
 
-  IRBuilder<> Builder(OldTerm);
+  IRBuilder<> Builder(BB);
   Builder.SetCurrentDebugLocation(OldTerm->getDebugLoc());
+  auto OldCond = GetTerminatorCondition(OldTerm);
+  OldTerm->eraseFromParent();
 
   // Insert an appropriate new terminator.
   if (!KeepEdge1 && !KeepEdge2) {
@@ -3969,7 +3974,7 @@ bool SimplifyCFGOpt::SimplifyTerminatorOnSelect(Instruction *OldTerm,
   } else if (KeepEdge1 && (KeepEdge2 || TrueBB == FalseBB)) {
     // Neither of the selected blocks were successors, so this
     // terminator must be unreachable.
-    new UnreachableInst(OldTerm->getContext(), OldTerm);
+    new UnreachableInst(BB->getContext(), BB);
   } else {
     // One of the selected values was a successor, but the other wasn't.
     // Insert an unconditional branch to the one that was found;
@@ -3982,8 +3987,8 @@ bool SimplifyCFGOpt::SimplifyTerminatorOnSelect(Instruction *OldTerm,
       Builder.CreateBr(FalseBB);
     }
   }
-
-  EraseTerminatorAndDCECond(OldTerm);
+  if (OldCond)
+    RecursivelyDeleteTriviallyDeadInstructions(OldCond);
 
   if (DTU) {
     SmallVector<DominatorTree::UpdateType, 2> Updates;
@@ -4722,17 +4727,21 @@ bool SimplifyCFGOpt::simplifyUnreachable(UnreachableInst *UI) {
       } else {
         assert(BI->isConditional() && "Can't get here with an uncond branch.");
         Value* Cond = BI->getCondition();
-        assert(BI->getSuccessor(0) != BI->getSuccessor(1) &&
+        auto Succ0 = BI->getSuccessor(0);
+        auto Succ1 = BI->getSuccessor(1);
+        assert(Succ0 != Succ1 &&
                "The destinations are guaranteed to be different here.");
-        if (BI->getSuccessor(0) == BB) {
+        Builder.SetInsertPoint(BI->getParent());
+        BI->eraseFromParent();
+        if (Succ0 == BB) {
           Builder.CreateAssumption(Builder.CreateNot(Cond));
-          Builder.CreateBr(BI->getSuccessor(1));
+          Builder.CreateBr(Succ1);
         } else {
-          assert(BI->getSuccessor(1) == BB && "Incorrect CFG");
+          assert(Succ1 == BB && "Incorrect CFG");
           Builder.CreateAssumption(Cond);
-          Builder.CreateBr(BI->getSuccessor(0));
+          Builder.CreateBr(Succ0);
         }
-        EraseTerminatorAndDCECond(BI);
+        RecursivelyDeleteTriviallyDeadInstructions(Cond);
         Changed = true;
       }
       if (DTU)
@@ -5439,10 +5448,6 @@ static void RemoveSwitchAfterSelectConversion(SwitchInst *SI, PHINode *PHI,
   BasicBlock *SelectBB = SI->getParent();
   BasicBlock *DestBB = PHI->getParent();
 
-  if (DTU && !is_contained(predecessors(DestBB), SelectBB))
-    Updates.push_back({DominatorTree::Insert, SelectBB, DestBB});
-  Builder.CreateBr(DestBB);
-
   // Remove the switch.
 
   while (PHI->getBasicBlockIndex(SelectBB) >= 0)
@@ -5460,8 +5465,13 @@ static void RemoveSwitchAfterSelectConversion(SwitchInst *SI, PHINode *PHI,
       Updates.push_back({DominatorTree::Delete, SelectBB, Succ});
   }
   SI->eraseFromParent();
-  if (DTU)
+  Builder.SetInsertPoint(SelectBB);
+  Builder.CreateBr(DestBB);
+  if (DTU) {
+    if (!is_contained(predecessors(DestBB), SelectBB))
+      Updates.push_back({DominatorTree::Insert, SelectBB, DestBB});
     DTU->applyUpdates(Updates);
+  }
 }
 
 /// If the switch is only used to initialize one or more
@@ -5784,6 +5794,26 @@ ShouldBuildLookupTable(SwitchInst *SI, uint64_t TableSize,
   return SI->getNumCases() * 10 >= TableSize * 4;
 }
 
+static bool branchDominatesPhi(BasicBlock *BranchBlock, BasicBlock *PhiBlock)
+{
+  // Check if the branch instruction dominates the phi node. It's a simple
+  // dominance check, but sufficient for our needs.
+  // Although this check is invariant in the calling loops, it's better to do it
+  // at this late stage. Practically we do it at most once for a switch.
+  for (BasicBlock *Pred : predecessors(PhiBlock)) {
+    if (Pred == BranchBlock)
+      continue;
+    if (Pred == &Pred->getParent()->getEntryBlock())
+      return false;
+    if (Pred->hasNPredecessors(0))
+      continue;
+    if (Pred->getUniquePredecessor() == BranchBlock)
+      continue;
+    return false;
+  }
+  return true;
+}
+
 /// Try to reuse the switch table index compare. Following pattern:
 /// \code
 ///     if (idx < tablesize)
@@ -5842,15 +5872,8 @@ static void reuseTableCompare(
            "Expect true or false as compare result.");
   }
 
-  // Check if the branch instruction dominates the phi node. It's a simple
-  // dominance check, but sufficient for our needs.
-  // Although this check is invariant in the calling loops, it's better to do it
-  // at this late stage. Practically we do it at most once for a switch.
-  BasicBlock *BranchBlock = RangeCheckBranch->getParent();
-  for (BasicBlock *Pred : predecessors(PhiBlock)) {
-    if (Pred != BranchBlock && Pred->getUniquePredecessor() != BranchBlock)
-      return;
-  }
+  if (!branchDominatesPhi(RangeCheckBranch->getParent(), PhiBlock))
+    return;
 
   if (DefaultConst == FalseConst) {
     // The compare yields the same result. We can replace it.
@@ -5863,6 +5886,18 @@ static void reuseTableCompare(
         RangeCheckBranch);
     CmpInst->replaceAllUsesWith(InvertedTableCmp);
     ++NumTableCmpReuses;
+  }
+}
+
+static void removePredecessorFromDefaultDest(BasicBlock *DD, BasicBlock *Pred) {
+  // Return early if there are no PHI nodes to update.
+  if (DD->empty() || !isa<PHINode>(DD->begin()))
+     return;
+
+  // We cached the PHINodes. To avoid accessing deleted PHINodes
+  // later, do not delete PHINodes here.
+  for (PHINode &Phi : make_early_inc_range(DD->phis())) {
+     Phi.removeIncomingValue(Pred, false);
   }
 }
 
@@ -5976,13 +6011,27 @@ static bool SwitchToLookupTable(SwitchInst *SI, IRBuilder<> &Builder,
   BasicBlock *LookupBB = BasicBlock::Create(
       Mod.getContext(), "switch.lookup", CommonDest->getParent(), CommonDest);
 
+  // Remove the switch.
+  auto DefaultDest = SI->getDefaultDest();
+  auto Cond = SI->getCondition();
+  SmallPtrSet<BasicBlock *, 8> RemovedSuccessors;
+  for (unsigned i = 0, e = SI->getNumSuccessors(); i < e; ++i) {
+    BasicBlock *Succ = SI->getSuccessor(i);
+
+    if (Succ == DefaultDest)
+      continue;
+    Succ->removePredecessor(BB);
+    RemovedSuccessors.insert(Succ);
+  }
+  SI->eraseFromParent();
+  Builder.SetInsertPoint(BB);
+
   // Compute the table index value.
-  Builder.SetInsertPoint(SI);
   Value *TableIndex;
   if (MinCaseVal->isNullValue())
-    TableIndex = SI->getCondition();
+    TableIndex = Cond;
   else
-    TableIndex = Builder.CreateSub(SI->getCondition(), MinCaseVal,
+    TableIndex = Builder.CreateSub(Cond, MinCaseVal,
                                    "switch.tableidx");
 
   // Compute the maximum table size representable by the integer type we are
@@ -5997,7 +6046,7 @@ static bool SwitchToLookupTable(SwitchInst *SI, IRBuilder<> &Builder,
   // all values of the conditional variable, branch directly to the lookup table
   // BB. Otherwise, check that the condition is within the case range.
   const bool DefaultIsReachable =
-      !isa<UnreachableInst>(SI->getDefaultDest()->getFirstNonPHIOrDbg());
+      !isa<UnreachableInst>(DefaultDest->getFirstNonPHIOrDbg());
   const bool GeneratingCoveredLookupTable = (MaxTableSize == TableSize);
   BranchInst *RangeCheckBranch = nullptr;
 
@@ -6011,7 +6060,7 @@ static bool SwitchToLookupTable(SwitchInst *SI, IRBuilder<> &Builder,
     Value *Cmp = Builder.CreateICmpULT(
         TableIndex, ConstantInt::get(MinCaseVal->getType(), TableSize));
     RangeCheckBranch =
-        Builder.CreateCondBr(Cmp, LookupBB, SI->getDefaultDest());
+        Builder.CreateCondBr(Cmp, LookupBB, DefaultDest);
     if (DTU)
       Updates.push_back({DominatorTree::Insert, BB, LookupBB});
   }
@@ -6050,22 +6099,19 @@ static bool SwitchToLookupTable(SwitchInst *SI, IRBuilder<> &Builder,
     Value *Shifted = Builder.CreateLShr(TableMask, MaskIndex, "switch.shifted");
     Value *LoBit = Builder.CreateTrunc(
         Shifted, Type::getInt1Ty(Mod.getContext()), "switch.lobit");
-    Builder.CreateCondBr(LoBit, LookupBB, SI->getDefaultDest());
+    Builder.CreateCondBr(LoBit, LookupBB, DefaultDest);
     if (DTU) {
       Updates.push_back({DominatorTree::Insert, MaskBB, LookupBB});
-      Updates.push_back({DominatorTree::Insert, MaskBB, SI->getDefaultDest()});
+      Updates.push_back({DominatorTree::Insert, MaskBB, DefaultDest});
     }
     Builder.SetInsertPoint(LookupBB);
-    AddPredecessorToBlock(SI->getDefaultDest(), MaskBB, BB);
+    AddPredecessorToBlock(DefaultDest, MaskBB, BB);
   }
 
   if (!DefaultIsReachable || GeneratingCoveredLookupTable) {
-    // We cached PHINodes in PHIs. To avoid accessing deleted PHINodes later,
-    // do not delete PHINodes here.
-    SI->getDefaultDest()->removePredecessor(BB,
-                                            /*KeepOneInputPHIs=*/true);
+    removePredecessorFromDefaultDest(DefaultDest, BB);
     if (DTU)
-      Updates.push_back({DominatorTree::Delete, BB, SI->getDefaultDest()});
+      Updates.push_back({DominatorTree::Delete, BB, DefaultDest});
   }
 
   bool ReturnedEarly = false;
@@ -6107,18 +6153,6 @@ static bool SwitchToLookupTable(SwitchInst *SI, IRBuilder<> &Builder,
     if (DTU)
       Updates.push_back({DominatorTree::Insert, LookupBB, CommonDest});
   }
-
-  // Remove the switch.
-  SmallPtrSet<BasicBlock *, 8> RemovedSuccessors;
-  for (unsigned i = 0, e = SI->getNumSuccessors(); i < e; ++i) {
-    BasicBlock *Succ = SI->getSuccessor(i);
-
-    if (Succ == SI->getDefaultDest())
-      continue;
-    Succ->removePredecessor(BB);
-    RemovedSuccessors.insert(Succ);
-  }
-  SI->eraseFromParent();
 
   if (DTU) {
     for (BasicBlock *RemovedSuccessor : RemovedSuccessors)
@@ -6685,6 +6719,8 @@ static bool removeUndefIntroducingPredecessor(BasicBlock *BB,
         IRBuilder<> Builder(T);
         if (BranchInst *BI = dyn_cast<BranchInst>(T)) {
           BB->removePredecessor(Predecessor);
+          BI->eraseFromParent();
+          Builder.SetInsertPoint(Predecessor);
           // Turn uncoditional branches into unreachables and remove the dead
           // destination from conditional branches.
           if (BI->isUnconditional())
@@ -6692,7 +6728,6 @@ static bool removeUndefIntroducingPredecessor(BasicBlock *BB,
           else
             Builder.CreateBr(BI->getSuccessor(0) == BB ? BI->getSuccessor(1)
                                                        : BI->getSuccessor(0));
-          BI->eraseFromParent();
           if (DTU)
             DTU->applyUpdates({{DominatorTree::Delete, Predecessor, BB}});
           return true;

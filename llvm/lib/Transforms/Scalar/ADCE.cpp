@@ -671,14 +671,15 @@ void AggressiveDeadCodeElimination::makeUnconditional(BasicBlock *BB,
   }
   LLVM_DEBUG(dbgs() << "making unconditional " << BB->getName() << '\n');
   NumBranchesRemoved += 1;
-  IRBuilder<> Builder(PredTerm);
-  auto *NewTerm = Builder.CreateBr(Target);
-  InstInfo[NewTerm].Live = true;
-  if (const DILocation *DL = PredTerm->getDebugLoc())
-    NewTerm->setDebugLoc(DL);
 
+  auto DL = PredTerm->getDebugLoc();
   InstInfo.erase(PredTerm);
   PredTerm->eraseFromParent();
+
+  IRBuilder<> Builder(BB);
+  auto *NewTerm = Builder.CreateBr(Target);
+  InstInfo[NewTerm].Live = true;
+  NewTerm->setDebugLoc(DL);
 }
 
 //===----------------------------------------------------------------------===//

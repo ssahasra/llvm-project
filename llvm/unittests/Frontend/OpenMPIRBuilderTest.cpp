@@ -474,9 +474,10 @@ TEST_F(OpenMPIRBuilderTest, ParallelSimple) {
     SplitBlockAndInsertIfThenElse(Cmp, CodeGenIP.getBlock()->getTerminator(),
                                   &ThenTerm, &ElseTerm);
 
-    Builder.SetInsertPoint(ThenTerm);
-    Builder.CreateBr(&ContinuationIP);
+    auto BB = ThenTerm->getParent();
     ThenTerm->eraseFromParent();
+    Builder.SetInsertPoint(BB);
+    Builder.CreateBr(&ContinuationIP);
   };
 
   auto PrivCB = [&](InsertPointTy AllocaIP, InsertPointTy CodeGenIP,
@@ -780,9 +781,10 @@ TEST_F(OpenMPIRBuilderTest, ParallelIfCond) {
     SplitBlockAndInsertIfThenElse(Cmp, CodeGenIP.getBlock()->getTerminator(),
                                   &ThenTerm, &ElseTerm);
 
-    Builder.SetInsertPoint(ThenTerm);
-    Builder.CreateBr(&ContinuationIP);
+    auto BB = ThenTerm->getParent();
     ThenTerm->eraseFromParent();
+    Builder.SetInsertPoint(BB);
+    Builder.CreateBr(&ContinuationIP);
   };
 
   auto PrivCB = [&](InsertPointTy AllocaIP, InsertPointTy CodeGenIP,

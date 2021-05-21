@@ -516,10 +516,9 @@ private:
         MSSAU->removeDuplicatePhiEdgesBetween(BB, TheOnlySucc);
 
       IRBuilder<> Builder(BB->getContext());
-      Instruction *Term = BB->getTerminator();
-      Builder.SetInsertPoint(Term);
+      BB->getTerminator()->eraseFromParent();
+      Builder.SetInsertPoint(BB);
       Builder.CreateBr(TheOnlySucc);
-      Term->eraseFromParent();
 
       for (auto *DeadSucc : DeadSuccessors)
         DTUpdates.push_back({DominatorTree::Delete, BB, DeadSucc});

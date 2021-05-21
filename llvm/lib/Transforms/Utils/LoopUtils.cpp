@@ -631,10 +631,9 @@ void llvm::deleteDeadLoop(Loop *L, DominatorTree *DT, ScalarEvolution *SE,
     }
 
     // Disconnect the loop body by branching directly to its exit.
-    Builder.SetInsertPoint(Preheader->getTerminator());
-    Builder.CreateBr(ExitBlock);
-    // Remove the old branch.
     Preheader->getTerminator()->eraseFromParent();
+    Builder.SetInsertPoint(Preheader);
+    Builder.CreateBr(ExitBlock);
   } else {
     assert(L->hasNoExitBlocks() &&
            "Loop should have either zero or one exit blocks.");

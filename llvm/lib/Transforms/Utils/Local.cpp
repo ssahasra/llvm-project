@@ -147,15 +147,22 @@ bool llvm::ConstantFoldTerminator(BasicBlock *BB, bool DeleteDeadConditions,
       assert(BI->getParent() && "Terminator not inserted in block!");
       Dest1->removePredecessor(BI->getParent());
 
+      // Save metadata from the old branch instruction.
+      auto MD_loop = BI->getMetadata(LLVMContext::MD_loop);
+      auto MD_dbg = BI->getMetadata(LLVMContext::MD_dbg);
+      auto MD_annotation = BI->getMetadata(LLVMContext::MD_annotation);
+
       // Replace the conditional branch with an unconditional one.
-      BranchInst *NewBI = Builder.CreateBr(Dest1);
-
-      // Transfer the metadata to the new branch instruction.
-      NewBI->copyMetadata(*BI, {LLVMContext::MD_loop, LLVMContext::MD_dbg,
-                                LLVMContext::MD_annotation});
-
       Value *Cond = BI->getCondition();
       BI->eraseFromParent();
+      Builder.SetInsertPoint(BB);
+      BranchInst *NewBI = Builder.CreateBr(Dest1);
+
+      // Restore metadata to the new branch.
+      NewBI->setMetadata(LLVMContext::MD_loop, MD_loop);
+      NewBI->setMetadata(LLVMContext::MD_dbg, MD_dbg);
+      NewBI->setMetadata(LLVMContext::MD_annotation, MD_annotation);
+
       if (DeleteDeadConditions)
         RecursivelyDeleteTriviallyDeadInstructions(Cond, TLI);
       return true;
@@ -171,14 +178,21 @@ bool llvm::ConstantFoldTerminator(BasicBlock *BB, bool DeleteDeadConditions,
       // it will adjust it's PHI nodes.
       OldDest->removePredecessor(BB);
 
+      // Save metadata from the old branch instruction.
+      auto MD_loop = BI->getMetadata(LLVMContext::MD_loop);
+      auto MD_dbg = BI->getMetadata(LLVMContext::MD_dbg);
+      auto MD_annotation = BI->getMetadata(LLVMContext::MD_annotation);
+
       // Replace the conditional branch with an unconditional one.
-      BranchInst *NewBI = Builder.CreateBr(Destination);
-
-      // Transfer the metadata to the new branch instruction.
-      NewBI->copyMetadata(*BI, {LLVMContext::MD_loop, LLVMContext::MD_dbg,
-                                LLVMContext::MD_annotation});
-
       BI->eraseFromParent();
+      Builder.SetInsertPoint(BB);
+      auto NewBI = Builder.CreateBr(Destination);
+
+      // Restore metadata to the new branch.
+      NewBI->setMetadata(LLVMContext::MD_loop, MD_loop);
+      NewBI->setMetadata(LLVMContext::MD_dbg, MD_dbg);
+      NewBI->setMetadata(LLVMContext::MD_annotation, MD_annotation);
+
       if (DTU)
         DTU->applyUpdates({{DominatorTree::Delete, BB, OldDest}});
       return true;
@@ -263,12 +277,8 @@ bool llvm::ConstantFoldTerminator(BasicBlock *BB, bool DeleteDeadConditions,
     // If we found a single destination that we can fold the switch into, do so
     // now.
     if (TheOnlyDest) {
-      // Insert the new branch.
-      Builder.CreateBr(TheOnlyDest);
       BasicBlock *BB = SI->getParent();
-
       SmallSet<BasicBlock *, 8> RemovedSuccessors;
-
       // Remove entries from PHI nodes which we no longer branch to...
       BasicBlock *SuccToKeep = TheOnlyDest;
       for (BasicBlock *Succ : successors(SI)) {
@@ -285,6 +295,10 @@ bool llvm::ConstantFoldTerminator(BasicBlock *BB, bool DeleteDeadConditions,
       // Delete the old switch.
       Value *Cond = SI->getCondition();
       SI->eraseFromParent();
+      // Insert the new branch.
+      Builder.SetInsertPoint(BB);
+      Builder.CreateBr(TheOnlyDest);
+
       if (DeleteDeadConditions)
         RecursivelyDeleteTriviallyDeadInstructions(Cond, TLI);
       if (DTU) {
@@ -341,9 +355,6 @@ bool llvm::ConstantFoldTerminator(BasicBlock *BB, bool DeleteDeadConditions,
       BasicBlock *TheOnlyDest = BA->getBasicBlock();
       SmallSet<BasicBlock *, 8> RemovedSuccessors;
 
-      // Insert the new branch.
-      Builder.CreateBr(TheOnlyDest);
-
       BasicBlock *SuccToKeep = TheOnlyDest;
       for (unsigned i = 0, e = IBI->getNumDestinations(); i != e; ++i) {
         BasicBlock *DestBB = IBI->getDestination(i);
@@ -357,6 +368,10 @@ bool llvm::ConstantFoldTerminator(BasicBlock *BB, bool DeleteDeadConditions,
       }
       Value *Address = IBI->getAddress();
       IBI->eraseFromParent();
+      // Insert the new branch.
+      Builder.SetInsertPoint(BB);
+      Builder.CreateBr(TheOnlyDest);
+
       if (DeleteDeadConditions)
         // Delete pointer cast instructions.
         RecursivelyDeleteTriviallyDeadInstructions(Address, TLI);
