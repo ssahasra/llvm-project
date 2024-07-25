@@ -20,7 +20,7 @@ namespace llvm {
 class AddConvergenceControlPass
     : public PassInfoMixin<AddConvergenceControlPass> {
 public:
-  PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM);
 };
 
 } // end namespace llvm
