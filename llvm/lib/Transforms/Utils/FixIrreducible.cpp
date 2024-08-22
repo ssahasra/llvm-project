@@ -227,7 +227,7 @@ static void updateLoopInfo(LoopInfo &LI, Cycle &C,
 // Given a set of blocks and headers in an irreducible SCC, convert it into a
 // natural loop. Also insert this new loop at its appropriate place in the
 // hierarchy of loops.
-static bool fixIrreducible(Cycle &C, CycleInfo &CI, DominatorTree &DT,
+bool llvm::fixIrreducibleCycle(Cycle &C, CycleInfo &CI, DominatorTree &DT,
                            LoopInfo *LI) {
   if (C.isReducible())
     return false;
@@ -332,7 +332,7 @@ static bool FixIrreducibleImpl(Function &F, CycleInfo &CI, DominatorTree &DT,
   bool Changed = false;
   for (Cycle *TopCycle : CI.toplevel_cycles()) {
     for (Cycle *C : depth_first(TopCycle)) {
-      Changed |= fixIrreducible(*C, CI, DT, LI);
+      Changed |= fixIrreducibleCycle(*C, CI, DT, LI);
     }
   }
 
