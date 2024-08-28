@@ -1357,19 +1357,27 @@ of the condition.
 def ConvergentDocs : Documentation {
   let Category = DocCatFunction;
   let Content = [{
-The ``convergent`` attribute can be placed on a function declaration. It is
-translated into the LLVM ``convergent`` attribute, which indicates that the call
-instructions of a function with this attribute cannot be made control-dependent
-on any additional values.
+The ``convergent`` attribute can be placed on a function declaration, and it is
+translated into the LLVM ``convergent`` attribute.
 
-In languages designed for SPMD/SIMT programming model, e.g. OpenCL or CUDA,
-the call instructions of a function with this attribute must be executed by
-all work items or threads in a work group or sub group.
+Languages following SPMD/SIMT programming model (such as OpenCL, CUDA or HIP)
+execute threads in groups that allow efficient communication within the group
+using special primitives called convergent operations. The outcome of a
+convergent operation is sensitive to the set of threads that are available to
+communicate at each such invocation. This set of threads is implicitly affected
+by control flow: when control flow *diverges*, i.e. threads of the same group
+follow different paths through the program, not all threads of the group may be
+available to participate in this communication.
+
+If a function is marked ``convergent``, then in general, control flow
+transformations should not affect the set of threads that communicate at a call
+to such a function.
 
 This attribute is different from ``noduplicate`` because it allows duplicating
-function calls if it can be proved that the duplicated function calls are
-not made control-dependent on any additional values, e.g., unrolling a loop
-executed by all work items.
+function calls if it can be proved that the set of threads that communicate at
+each duplicated function call is compatible with the set of threads that
+communicated at the original function call. For example, a loop containing a
+convergent operations can be unrolled as long as there is no remainder.
 
 Sample usage:
 
@@ -1385,17 +1393,23 @@ Sample usage:
 def NoConvergentDocs : Documentation {
   let Category = DocCatFunction;
   let Content = [{
-This attribute prevents a function from being treated as convergent, which
-means that optimizations can only move calls to that function to
-control-equivalent blocks. If a statement is marked as ``noconvergent`` and
-contains calls, it also prevents those calls from being treated as convergent.
-In other words, those calls are not restricted to only being moved to
-control-equivalent blocks.
+The ``noconvergent`` attribute can be placed on a function declaration or a
+statement, and it is translated into the LLVM ``noconvergent`` attribute.
 
-In languages following SPMD/SIMT programming model, e.g., CUDA/HIP, function
-declarations and calls are treated as convergent by default for correctness.
-This ``noconvergent`` attribute is helpful for developers to prevent them from
-being treated as convergent when it's safe.
+In languages following SPMD/SIMT programming model (such as OpenCL, CUDA or HIP)
+function declarations and function calls are treated as convergent by default
+for correctness. This attribute is used to override that default property.
+
+If a function call statement is marked as ``noconvergent``, the set of threads
+that communicate at this call is an implementation-defined subset of all threads
+that reach this call.
+
+If a function declaration is marked as ``noconvergent``, then every call to that
+function is assumed to have the same attribute.
+
+If a statement is marked as ``noconvergent`` then ever function call inside that
+statement is assumed to have the same attribute.
+
 
 .. code-block:: c
 
@@ -1406,6 +1420,36 @@ being treated as convergent when it's safe.
     float x;
     [[clang::noconvergent]] x = bar(x);
   }
+
+  }];
+}
+
+def ConvergenceCtrlScopeDocs : Documentation {
+  let Category = DocCatFunction;
+  let Content = [{
+
+The ``convergencectrl_scope`` attribute can be placed on a compound statement.
+
+If a compound statement is marked ``convergencectrl_scope``, then the set of
+threads that communicate at each convergent call inside that compound statement
+is implementation-defined. The implementation must ensure that the threads that
+communicate at any convergent call in such a scope continue to do so at any
+subsequent convergent call that they reach within the same scope.
+
+.. code-block:: c
+
+  __device__ float foo(float) __attribute__((convergent)) {}
+
+  for (...) __attribute__((convergencectrl_scope)) {
+    x1 = foo(x);
+    if (...) {
+      x2 = foo(x1);
+    }
+  }
+
+In the example above, the set of threads that communicate at call ``x2`` is a
+subset of the set of threads that communicate at call ``x1``, which in turn, is
+an implementation-defined set of threads created when entering the ``for`` loop.
 
   }];
 }
