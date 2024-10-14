@@ -110,49 +110,41 @@ tangle at each call of the function.
 The function body is itself a compound statement, and its substatements derive
 their tangles from the tangle associated with the body.
 
-Compound Statements
--------------------
+Statements
+----------
 
-In a compound statement ``S1`` executed with an associated tangle ``T1``, the
-tangle associated with the first substatement is ``T1``. The tangle associated
-with each subsequent substatement ``S2`` is the set of threads that reach ``S2``
-from the tangle associated with the *previous* substatement in ``S1``.
+The tangle ``T`` associated with an execution of statement ``S`` is determined
+as follow:
 
-Iteration statement
--------------------
-
-When executing an iteration statement with an associated tangle ``T``, the
-tangle associated with the condition substatement is ``T``, and the tangle
-associated the body substatement is the set of threads in ``T`` that reach the
-body substatement.
-
-When executing the condition substatement after executing the body substatement
-with an associated tangle ``Tn``, the tangle associated with the condition
-statement is ``Tn``, and the tangle associated with the subsequent execution of
-the body substatement is the set of threads in ``Tn`` that reach the body
-statement.
+- When ``S`` is a substatement of a parent statement ``S'`` executed with an
+  associated bundle ``T'``, ``T`` is the set of threads in ``T'`` that reach
+  ``S``.
+- When control jumps to a labelled statement inside ``S`` (or respectively, a
+  ``case`` label inside ``S``) due to the execution of a ``goto`` statement (or
+  respectively, a ``switch`` statement) with an associated bundle ``T'``, ``T``
+  is the set of threads in ``T'`` that reach ``S``.
 
 .. note::
 
-   This split between the first and subsequent iterations of an iteration
-   statement allows us to determine the tangle associated with a jump into the
-   body substatement that might skip the first execution of the condition
-   substatement.
-
-Jumps
------
-
-When a ``goto`` statement (or respectively, a ``switch`` statement) ``G``
-executed with an associated tangle ``T`` transfers control to a ``label``
-statement (or respectively, a ``case`` label) ``S``, the tangle associated with
-``S`` is the set of threads in ``T`` that jump to ``S``.
-
-.. note::
+   Thus, independent of whether the statement ``S`` is entered in the "usual"
+   way, or due to an unstructured jump into it, the entire statement is
+   associated with the corresponding tangle. While this has no bearing on the
+   substatements in ``S`` that are skipped by the jump, such a definition
+   ensures that convergence is predictable in the remaining part of the
+   statement ``S``.
 
    This includes all unstructured code such as fall-through into a ``case``
    label, a ``goto`` or ``case`` label that jumps into an iteration statement, a
    ``goto`` that jumps backwards, a ``goto`` jumps across the substatements of a
    conditional statement, etc.
+
+Iteration statement
+-------------------
+
+When executing an iteration statement with an associated tangle ``T``, the
+tangle associated with each execution the condition substatement or the body
+substatement is the set of threads in ``T`` that reach the corresponding
+substatement.
 
 Implementation-defined Convergence
 ----------------------------------
