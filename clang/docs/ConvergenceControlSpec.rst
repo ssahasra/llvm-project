@@ -68,7 +68,7 @@ This document provides the constraints that determine the of candidate tangles
 associated with the possible executions of each statement.
 
 Expressions
------------
+===========
 
 When executing a statement ``S`` with an associated tangle ``T``, the tangle
 associated with each expression in ``S`` is of the set of threads in ``T`` that
@@ -81,8 +81,25 @@ evaluate that expression.
    evaluate only part of the operator do so convergently, excluding other
    threads in ``T``.
 
+Sequential Execution
+====================
+
+When a compound statement ``S1`` is executed with an associated tangle ``T1``, the
+tangle associated with the first substatement is ``T1``.
+
+When a statement ``S1`` is executed with an associated tangle ``T1``, the tangle
+associated with the statement ``S2`` executed next in sequence after ``S1`` is
+the set of threads in ``T1`` that reach the end of ``S1``.
+
+.. note::
+
+   In other words, threads in a tangle tend to "stay converged" as control moves
+   sequentially through the program. This is broken only when control is
+   transferred out of a statement by a ``goto``, forming an entirely new
+   sequence of execution.
+
 Function body
---------------
+=============
 
 The tangle associated with the execution of a function body is derived from the
 tangle at each call of the function.
@@ -110,41 +127,67 @@ tangle at each call of the function.
 The function body is itself a compound statement, and its substatements derive
 their tangles from the tangle associated with the body.
 
-Statements
-----------
+Iteration statement
+===================
 
-The tangle ``T`` associated with an execution of statement ``S`` is determined
-as follow:
+When executing the body substatement with an associated tangle ``Tn``, the
+tangle ``Tn+1`` associated with the end of the body substatement is the set of
+all threads in ``Tn`` that reach the end, including those threads that
+transferred control to the end by executing a ``continue`` statement.
+[Explanatory note: In other words, a ``continue`` statement does not produce
+divergence within the iteration statement.]
 
-- When ``S`` is a substatement of a parent statement ``S'`` executed with an
-  associated bundle ``T'``, ``T`` is the set of threads in ``T'`` that reach
-  ``S``.
-- When control jumps to a labelled statement inside ``S`` (or respectively, a
-  ``case`` label inside ``S``) due to the execution of a ``goto`` statement (or
-  respectively, a ``switch`` statement) with an associated bundle ``T'``, ``T``
-  is the set of threads in ``T'`` that reach ``S``.
+The tangle associated with the subsequent execution of the condition
+substatement and the body substatement is the set of threads in ``Tn+1`` that
+reach that substatement.
+
+The ``for`` Statement
+---------------------
 
 .. note::
 
-   Thus, independent of whether the statement ``S`` is entered in the "usual"
-   way, or due to an unstructured jump into it, the entire statement is
-   associated with the corresponding tangle. While this has no bearing on the
-   substatements in ``S`` that are skipped by the jump, such a definition
-   ensures that convergence is predictable in the remaining part of the
-   statement ``S``.
+   Thus every subsequent iteration of an iteration statement is associated with
+   a distinct tangle that is derived from the tangle associated with the
+   previous statement. This precludes such tangles from being *unrelated* as
+   described later.
 
-   This includes all unstructured code such as fall-through into a ``case``
-   label, a ``goto`` or ``case`` label that jumps into an iteration statement, a
-   ``goto`` that jumps backwards, a ``goto`` jumps across the substatements of a
-   conditional statement, etc.
+   The condition substatement and the body substatement need to be distinguished
+   in order to have a well-defined tangle in the case where control is
+   transferred directly into the body substatement via a jump.
 
-Iteration statement
--------------------
+The tangle associated with the end of the iteration statement is the set of all
+threads in ``T`` that reached the end, including those threads that transferred
+control to the end by executing a ``break`` statement. [Explanatory note: In
+other words, a ``break`` statement does not produce divergence after the
+iteration statement.]
 
-When executing an iteration statement with an associated tangle ``T``, the
-tangle associated with each execution the condition substatement or the body
-substatement is the set of threads in ``T`` that reach the corresponding
-substatement.
+The ``if`` Statement
+--------------------
+
+When an ``if`` statement is executed with an associated tangle ``T``, the tangle
+associated with the condition is ``T`` and the tangle associated with each of
+the two substatements is the set of threads in ``T`` that reach that statement.
+
+.. note::
+
+   Combined with sequential execution described above, this means that when an
+   ``if`` statement is executed with an associated tangle ``T``, the threads may
+   diverge to the ``then`` and ``else`` parts, but they reconverge if they reach
+   the end of the statement without transferring control via a ``goto`` statement.
+
+The ``switch`` Statement
+------------------------
+
+When a ``switch`` statement executed with an associated tangle ``T`` transfers
+control to a ``case`` label ``S``, the tangle associated with that execution of
+``S`` is the set of threads in ``T`` that jumped to ``S``.
+
+The ``goto`` Statement
+----------------------
+
+When a ``goto`` statement executed with an associated tangle ``T`` transfers
+control to a labelled statement ``S``, the tangle associated with that execution
+of ``S`` is the set of threads in ``T`` that jumped to ``S``.
 
 Implementation-defined Convergence
 ----------------------------------
@@ -161,3 +204,95 @@ is implementation defined.
    implementation may convert this cycle into a natural loop by adding a new
    header block. In that case, all threads entering that natural loop must
    converge at the header on every iteration.
+
+
+Examples
+--------
+
+.. code-block:: c++
+
+    void foo() {
+      ... = ... ;   // S1
+      ... = ... ;   // S2
+      if (cond) {   // S3
+        ... = ... ; // X1. This is a new sequence.
+        return;
+      }
+      ... = ... ;   // S4
+    }
+
+In the above example, the body of the ``foo()`` is executed with the tangle
+associated with that call to ``foo()``. Each substatement in the body derives
+its tangle from the previous substatement. In particular, ``X1`` is the set of
+threads in ``S3`` for which ``cond`` evaluated to ``true``, while ``S4`` is the
+complementary set of threads in ``S3`` for which ``cond`` evaluated to ``false``.
+
+.. code-block:: c++
+
+    void foo() {       // S1
+      if (cond1)       // S1
+      {
+        ... = ... ;    // S2
+        goto Target1;  // S2
+      }
+
+      if (cond2)       // S3
+      {                // S4
+        ... = ... ;
+      } else {         // S5
+        Target2:
+        ... = ...;
+      }
+    }
+
+In the above example, the candidate tangles associated with different executions
+for ``Target2``, are ``S2`` and ``S5``. They are unrelated, and whether or not
+they are converged into a single execution is implementation-defined.
+
+.. code-block:: c++
+
+    void foo() {       // S1
+      if (cond1)       // S1
+      {
+        ... = ... ;    // S2
+        goto Target2;  // S2
+      }
+
+      for (...)        // S3
+      {
+        ... = ...;
+        Target2:
+        ... = ...;
+      }
+    }
+
+ In the above example, the candidate tangles associated with ``Target2`` are in
+ two sequences: one derived from ``S3`` and the other derived from ``S2``.
+ Tangles from these two sequences respectively are pairwise unrelated to each
+ other, and whether they are converged is implementation-defined.
+
+ Duff's device can be analyzed in the same way as the above example.
+
+.. code-block:: c++
+
+    void foo() {       // S1
+      for (...)        // S1
+      {
+        ... = ...;
+        if (cond)
+          goto Target1;
+        ... = ...;
+      }
+
+      ... = ...;
+      Target1:
+      ... = ...;
+    }
+
+ In the above example, the tangles associated with ``Target1`` are arranged in
+ two sequences: those derived from the ``goto`` statement executed on different
+ iterations of the ``for`` loop, and those derived from threads exiting the for
+ loop on different iterations due to the evaluation of its conditions. As in the
+ previous examples, tangles from the respective sequences are unrelated, and
+ whether they are converged at ``Target1`` is implementation-defined.
+ 
