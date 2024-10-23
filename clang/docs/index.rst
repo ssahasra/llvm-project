@@ -52,6 +52,7 @@ Using Clang as a Compiler
    OpenMPSupport
    SYCLSupport
    HIPSupport
+   ThreadConvergence
    HLSL/HLSLDocs
    ThinLTO
    APINotes
